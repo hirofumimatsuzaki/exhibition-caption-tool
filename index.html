@@ -262,6 +262,23 @@
       white-space: pre-wrap;
     }
 
+    .caption-text {
+      display: none;
+    }
+
+    .lang-en .caption-text[data-lang="en"],
+    .lang-ja .caption-text[data-lang="ja"] {
+      display: block;
+    }
+
+    .screen-only {
+      display: block;
+    }
+
+    .print-only {
+      display: none;
+    }
+
     .card-actions {
       display: grid;
       gap: 8px;
@@ -312,9 +329,14 @@
       .controls,
       .card-actions,
       .caption-index,
+      .screen-only,
       button,
       .empty {
         display: none !important;
+      }
+
+      .print-only {
+        display: block !important;
       }
 
       .panel {
@@ -324,38 +346,49 @@
         background: transparent;
       }
 
-      .caption-list {
+      #captionList {
+        display: none !important;
+      }
+
+      #printList {
+        display: grid !important;
         gap: 0;
       }
 
-      .caption-card {
+      .print-page {
         border: none;
         padding: 0;
         border-radius: 0;
         gap: 10px;
-      }
-
-      .print-one .caption-card {
-        break-after: page;
-        page-break-after: always;
-      }
-
-      .print-one .caption-card:last-child {
-        break-after: auto;
-        page-break-after: auto;
-      }
-
-      .print-two .caption-card {
-        min-height: calc(50vh - 4mm);
+        display: grid;
         break-inside: avoid;
+        page-break-inside: avoid;
       }
 
-      .print-two .caption-card:nth-child(2n) {
+      .print-one .print-page {
         break-after: page;
         page-break-after: always;
       }
 
-      .print-two .caption-card:last-child {
+      .print-two .print-page {
+        min-height: calc(50vh - 4mm);
+      }
+
+      .print-two .print-page:nth-child(2n) {
+        break-after: page;
+        page-break-after: always;
+      }
+
+      .print-page.print-force-break {
+        break-after: page;
+        page-break-after: always;
+      }
+
+      .print-two .print-page.print-force-break {
+        min-height: auto;
+      }
+
+      .print-page.print-last {
         break-after: auto;
         page-break-after: auto;
       }
@@ -378,7 +411,7 @@
   <main>
     <header>
       <h1>展示キャプション管理ツール</h1>
-      <p>インスタ投稿文を貼り付けて1件ずつ追加し、まとめて印刷できます。</p>
+      <p>1件ずつ追加し、English / 日本語の本文を切り替えて印刷できます。</p>
     </header>
 
     <section class="panel form" aria-label="入力">
@@ -386,7 +419,7 @@
         <label for="sheetUrlInput">
           Google Sheets CSV URL
           <input id="sheetUrlInput" type="url" placeholder="https://docs.google.com/spreadsheets/..." />
-          <span class="hint">ウェブに公開したCSVのURLを貼り付けてください。</span>
+          <span class="hint">ヘッダーは title_en / artist / text_en / text_ja を推奨します。</span>
         </label>
         <div class="load-actions">
           <button type="button" class="primary" id="loadButton">読み込み</button>
@@ -397,18 +430,18 @@
       </div>
 
       <label id="titleField">
-        タイトル
-        <input id="titleInput" type="text" placeholder="作品タイトル" />
+        タイトル（英語）
+        <input id="titleInput" type="text" placeholder="Title" />
         <span class="hint" id="titleHint">必須</span>
       </label>
       <label id="authorField">
-        作家名
-        <input id="authorInput" type="text" placeholder="作家名" />
+        作家名（英語）
+        <input id="authorInput" type="text" placeholder="Artist" />
         <span class="hint" id="authorHint">必須</span>
       </label>
       <label id="descField">
         本文
-        <textarea id="descInput" placeholder="本文を貼り付けてください。改行はそのまま反映されます。"></textarea>
+        <textarea id="descInput" placeholder="本文を貼り付けてください。表示言語の本文として保存されます。改行はそのまま反映されます。"></textarea>
         <span class="hint" id="descHint">必須</span>
       </label>
 
@@ -422,6 +455,16 @@
     </section>
 
     <section class="panel controls" aria-label="印刷設定">
+      <div class="toggle-group" role="radiogroup" aria-label="本文表示切替">
+        <label>
+          <input type="radio" name="language" value="en" checked />
+          English
+        </label>
+        <label>
+          <input type="radio" name="language" value="ja" />
+          日本語
+        </label>
+      </div>
       <div class="toggle-group" role="radiogroup" aria-label="印刷枚数設定">
         <label>
           <input type="radio" name="printLayout" value="one" checked />
@@ -435,9 +478,10 @@
     </section>
 
     <section class="panel" aria-label="キャプション一覧">
-      <div class="caption-list" id="captionList">
+      <div class="caption-list screen-only" id="captionList">
         <p class="caption-desc empty" id="emptyState">まだキャプションがありません。</p>
       </div>
+      <div class="caption-list print-only" id="printList"></div>
     </section>
   </main>
 
@@ -450,11 +494,13 @@
     const clearAllButton = document.getElementById("clearAllButton");
     const captionList = document.getElementById("captionList");
     const emptyState = document.getElementById("emptyState");
+    const printList = document.getElementById("printList");
     const sheetUrlInput = document.getElementById("sheetUrlInput");
     const loadButton = document.getElementById("loadButton");
     const refreshButton = document.getElementById("refreshButton");
     const loadStatus = document.getElementById("loadStatus");
     const loadError = document.getElementById("loadError");
+    const languageRadios = document.querySelectorAll("input[name=language]");
 
     const titleField = document.getElementById("titleField");
     const authorField = document.getElementById("authorField");
@@ -463,6 +509,8 @@
     const STORAGE_KEY_ITEMS = "captionListItems";
     const STORAGE_KEY_LAYOUT = "captionPrintLayout";
     const STORAGE_KEY_SHEET_URL = "captionSheetUrl";
+    const STORAGE_KEY_LANGUAGE = "captionLanguage";
+    const LONG_TEXT_THRESHOLD = 800;
 
     let items = [];
     let editingIndex = null;
@@ -509,6 +557,28 @@
       clearFieldErrors();
     };
 
+    const normalizeItem = (item) => {
+      const titleEn = (item.titleEn ?? item.title_en ?? item.title ?? "").trim();
+      const artist = (item.artist ?? item.author ?? "").trim();
+      const textEn = (item.textEn ?? item.text_en ?? item.text ?? "").replace(/\r\n/g, "\n").trim();
+      const textJa = (item.textJa ?? item.text_ja ?? "").replace(/\r\n/g, "\n").trim();
+      return {
+        titleEn,
+        artist,
+        textEn,
+        textJa,
+      };
+    };
+
+    const getCurrentLanguage = () => document.body.dataset.lang || "en";
+
+    const setCurrentLanguage = (lang) => {
+      document.body.dataset.lang = lang;
+      document.body.classList.toggle("lang-en", lang === "en");
+      document.body.classList.toggle("lang-ja", lang === "ja");
+      localStorage.setItem(STORAGE_KEY_LANGUAGE, lang);
+    };
+
     const setLoading = (isLoading) => {
       loadStatus.style.display = isLoading ? "block" : "none";
       loadButton.disabled = isLoading;
@@ -526,7 +596,7 @@
     };
 
     const normalizeHeader = (value) =>
-      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/\s+/g, "");
+      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/[\s_]+/g, "");
 
     const parseCSV = (text) => {
       const rows = [];
@@ -584,19 +654,31 @@
       }
 
       const header = rows[0].map(normalizeHeader);
+      const titleEnIndex = header.indexOf("titleen");
       const titleIndex = header.indexOf("title");
       const artistIndex = header.indexOf("artist");
+      const authorIndex = header.indexOf("author");
+      const textEnIndex = header.indexOf("texten");
       const textIndex = header.indexOf("text");
+      const textJaIndex = header.indexOf("textja");
 
       const itemsFromRows = [];
       rows.slice(1).forEach((cells) => {
         if (!cells.length || cells.every((cell) => !cell || !cell.trim())) {
           return;
         }
-        const title = (cells[titleIndex] ?? cells[0] ?? "").trim();
-        const artist = (cells[artistIndex] ?? cells[1] ?? "").trim();
-        const text = (cells[textIndex] ?? cells[2] ?? "").replace(/\r\n/g, "\n").trim();
-        itemsFromRows.push({ title, author: artist, text });
+        const titleEn = (cells[titleEnIndex] ?? cells[titleIndex] ?? cells[0] ?? "").trim();
+        const artist = (cells[artistIndex] ?? cells[authorIndex] ?? cells[1] ?? "").trim();
+        const textEn = (cells[textEnIndex] ?? cells[textIndex] ?? cells[2] ?? "")
+          .replace(/\r\n/g, "\n")
+          .trim();
+        const textJa = (cells[textJaIndex] ?? "").replace(/\r\n/g, "\n").trim();
+        itemsFromRows.push({
+          titleEn,
+          artist,
+          textEn,
+          textJa,
+        });
       });
 
       if (!itemsFromRows.length) {
@@ -624,10 +706,10 @@
         const rows = parseCSV(text);
         const { items: loadedItems, error } = mapRowsToItems(rows);
         if (error) {
-          showLoadError(`${error} ヘッダーは title / artist / text を推奨します。`);
+          showLoadError(`${error} ヘッダーは title_en / artist / text_en / text_ja を推奨します。`);
           return;
         }
-        items = loadedItems;
+        items = loadedItems.map((item) => normalizeItem(item));
         saveItems();
         renderList();
         resetForm();
@@ -645,6 +727,7 @@
     };
 
     const saveItems = () => {
+      items = items.map((item) => normalizeItem(item));
       localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
     };
 
@@ -656,7 +739,7 @@
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          items = parsed;
+          items = parsed.map((item) => normalizeItem(item));
         }
       } catch (error) {
         localStorage.removeItem(STORAGE_KEY_ITEMS);
@@ -665,12 +748,18 @@
 
     const renderList = () => {
       captionList.innerHTML = "";
+      printList.innerHTML = "";
       if (!items.length) {
         captionList.appendChild(emptyState);
         return;
       }
 
-      items.forEach((item, index) => {
+      const currentLanguage = getCurrentLanguage();
+      const printPages = [];
+
+      items.forEach((rawItem, index) => {
+        const item = normalizeItem(rawItem);
+
         const card = document.createElement("article");
         card.className = "caption-card";
 
@@ -683,15 +772,21 @@
 
         const title = document.createElement("h2");
         title.className = "caption-title";
-        title.textContent = item.title;
+        title.textContent = item.titleEn || "タイトル未入力";
 
         const author = document.createElement("h3");
         author.className = "caption-author";
-        author.textContent = item.author;
+        author.textContent = item.artist || "作家名未入力";
 
-        const desc = document.createElement("p");
-        desc.className = "caption-desc";
-        desc.textContent = item.text;
+        const descEn = document.createElement("p");
+        descEn.className = "caption-desc caption-text";
+        descEn.dataset.lang = "en";
+        descEn.textContent = item.textEn || item.textJa || "本文未入力";
+
+        const descJa = document.createElement("p");
+        descJa.className = "caption-desc caption-text";
+        descJa.dataset.lang = "ja";
+        descJa.textContent = item.textJa || item.textEn || "本文未入力";
 
         const actions = document.createElement("div");
         actions.className = "card-actions";
@@ -700,9 +795,10 @@
         editButton.type = "button";
         editButton.textContent = "編集";
         editButton.addEventListener("click", () => {
-          titleInput.value = item.title;
-          authorInput.value = item.author;
-          descInput.value = item.text;
+          const lang = getCurrentLanguage();
+          titleInput.value = item.titleEn;
+          authorInput.value = item.artist;
+          descInput.value = lang === "ja" ? item.textJa || item.textEn : item.textEn || item.textJa;
           editingIndex = index;
           addButton.textContent = "更新";
           window.scrollTo({ top: 0, behavior: "smooth" });
@@ -755,11 +851,62 @@
 
         card.appendChild(header);
         card.appendChild(author);
-        card.appendChild(desc);
+        card.appendChild(descEn);
+        card.appendChild(descJa);
         card.appendChild(actions);
 
         captionList.appendChild(card);
+
+        const longText =
+          item.textEn.length >= LONG_TEXT_THRESHOLD || item.textJa.length >= LONG_TEXT_THRESHOLD;
+        const hasJa = item.textJa.length > 0;
+        const printTitle = item.titleEn || "タイトル未入力";
+        const printArtist = item.artist || "作家名未入力";
+        const printTextEn = item.textEn || item.textJa || "本文未入力";
+        const printTextJa = item.textJa;
+
+        const createPrintPage = (lang, text, forceBreak) => {
+          const page = document.createElement("section");
+          page.className = "print-page";
+          page.dataset.lang = lang;
+          if (forceBreak) {
+            page.classList.add("print-force-break");
+          }
+
+          const pageTitle = document.createElement("h2");
+          pageTitle.className = "caption-title";
+          pageTitle.textContent = printTitle;
+
+          const pageArtist = document.createElement("h3");
+          pageArtist.className = "caption-author";
+          pageArtist.textContent = printArtist;
+
+          const pageDesc = document.createElement("p");
+          pageDesc.className = "caption-desc";
+          pageDesc.textContent = text;
+
+          page.appendChild(pageTitle);
+          page.appendChild(pageArtist);
+          page.appendChild(pageDesc);
+
+          printPages.push(page);
+          printList.appendChild(page);
+        };
+
+        if (longText && hasJa) {
+          createPrintPage("en", printTextEn, true);
+          createPrintPage("ja", printTextJa, true);
+        } else {
+          const useJa = currentLanguage === "ja" && hasJa;
+          const lang = useJa ? "ja" : "en";
+          const text = useJa ? printTextJa : printTextEn;
+          createPrintPage(lang, text, false);
+        }
       });
+
+      if (printPages.length) {
+        printPages[printPages.length - 1].classList.add("print-last");
+      }
     };
 
     const applyLayout = (layout) => {
@@ -773,15 +920,33 @@
         return;
       }
 
-      const entry = {
-        title: titleInput.value.trim(),
-        author: authorInput.value.trim(),
-        text: descInput.value.trim(),
+      const currentLanguage = getCurrentLanguage();
+      const baseEntry = {
+        titleEn: titleInput.value.trim(),
+        artist: authorInput.value.trim(),
       };
+      const descValue = descInput.value.trim();
 
       if (editingIndex !== null) {
-        items[editingIndex] = entry;
+        const existing = normalizeItem(items[editingIndex] ?? {});
+        const updated = {
+          ...existing,
+          ...baseEntry,
+          textEn: existing.textEn,
+          textJa: existing.textJa,
+        };
+        if (currentLanguage === "ja") {
+          updated.textJa = descValue;
+        } else {
+          updated.textEn = descValue;
+        }
+        items[editingIndex] = updated;
       } else {
+        const entry = normalizeItem({
+          ...baseEntry,
+          textEn: currentLanguage === "en" ? descValue : "",
+          textJa: currentLanguage === "ja" ? descValue : "",
+        });
         items.push(entry);
       }
 
@@ -819,6 +984,20 @@
       });
     });
 
+    languageRadios.forEach((radio) => {
+      radio.addEventListener("change", (event) => {
+        setCurrentLanguage(event.target.value);
+        if (editingIndex !== null && items[editingIndex]) {
+          const currentItem = normalizeItem(items[editingIndex]);
+          descInput.value =
+            event.target.value === "ja"
+              ? currentItem.textJa || currentItem.textEn
+              : currentItem.textEn || currentItem.textJa;
+        }
+        renderList();
+      });
+    });
+
     [titleInput, authorInput, descInput].forEach((input) => {
       input.addEventListener("input", () => {
         if (editingIndex !== null) {
@@ -835,7 +1014,14 @@
 
     const initialize = () => {
       loadItems();
-      renderList();
+      const savedLanguage = localStorage.getItem(STORAGE_KEY_LANGUAGE) || "en";
+      const selectedLanguage = document.querySelector(
+        `input[name=language][value="${savedLanguage}"]`
+      );
+      if (selectedLanguage) {
+        selectedLanguage.checked = true;
+      }
+      setCurrentLanguage(savedLanguage);
 
       const savedUrl = localStorage.getItem(STORAGE_KEY_SHEET_URL);
       if (savedUrl) {
@@ -848,6 +1034,8 @@
         selected.checked = true;
       }
       applyLayout(savedLayout);
+
+      renderList();
     };
 
     initialize();
