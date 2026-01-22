@@ -117,6 +117,40 @@
       font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
     }
 
+    .load-panel {
+      display: grid;
+      gap: 12px;
+    }
+
+    .load-row {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr;
+    }
+
+    .load-actions {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+
+    .loading {
+      font-size: 0.9rem;
+      color: var(--muted);
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+      display: none;
+    }
+
+    .error-panel {
+      border: 1px solid rgba(178, 58, 42, 0.35);
+      background: #fff5f2;
+      color: var(--error);
+      padding: 14px 16px;
+      border-radius: 12px;
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+      display: none;
+    }
+
     .actions {
       display: grid;
       gap: 12px;
@@ -272,6 +306,9 @@
       header,
       .form,
       .actions,
+      .load-panel,
+      .loading,
+      .error-panel,
       .controls,
       .card-actions,
       .caption-index,
@@ -345,6 +382,20 @@
     </header>
 
     <section class="panel form" aria-label="入力">
+      <div class="load-panel" aria-label="Google Sheets 読み込み">
+        <label for="sheetUrlInput">
+          Google Sheets CSV URL
+          <input id="sheetUrlInput" type="url" placeholder="https://docs.google.com/spreadsheets/..." />
+          <span class="hint">ウェブに公開したCSVのURLを貼り付けてください。</span>
+        </label>
+        <div class="load-actions">
+          <button type="button" class="primary" id="loadButton">読み込み</button>
+          <button type="button" id="refreshButton">更新</button>
+        </div>
+        <div class="loading" id="loadStatus" role="status" aria-live="polite">読み込み中...</div>
+        <div class="error-panel" id="loadError" aria-live="polite"></div>
+      </div>
+
       <label id="titleField">
         タイトル
         <input id="titleInput" type="text" placeholder="作品タイトル" />
@@ -399,6 +450,11 @@
     const clearAllButton = document.getElementById("clearAllButton");
     const captionList = document.getElementById("captionList");
     const emptyState = document.getElementById("emptyState");
+    const sheetUrlInput = document.getElementById("sheetUrlInput");
+    const loadButton = document.getElementById("loadButton");
+    const refreshButton = document.getElementById("refreshButton");
+    const loadStatus = document.getElementById("loadStatus");
+    const loadError = document.getElementById("loadError");
 
     const titleField = document.getElementById("titleField");
     const authorField = document.getElementById("authorField");
@@ -406,6 +462,7 @@
 
     const STORAGE_KEY_ITEMS = "captionListItems";
     const STORAGE_KEY_LAYOUT = "captionPrintLayout";
+    const STORAGE_KEY_SHEET_URL = "captionSheetUrl";
 
     let items = [];
     let editingIndex = null;
@@ -450,6 +507,141 @@
       editingIndex = null;
       addButton.textContent = "追加";
       clearFieldErrors();
+    };
+
+    const setLoading = (isLoading) => {
+      loadStatus.style.display = isLoading ? "block" : "none";
+      loadButton.disabled = isLoading;
+      refreshButton.disabled = isLoading;
+    };
+
+    const showLoadError = (message) => {
+      loadError.textContent = message;
+      loadError.style.display = "block";
+    };
+
+    const clearLoadError = () => {
+      loadError.textContent = "";
+      loadError.style.display = "none";
+    };
+
+    const normalizeHeader = (value) =>
+      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/\s+/g, "");
+
+    const parseCSV = (text) => {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let inQuotes = false;
+
+      for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        if (inQuotes) {
+          if (char === "\"") {
+            if (text[i + 1] === "\"") {
+              field += "\"";
+              i += 1;
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            field += char;
+          }
+        } else if (char === "\"") {
+          inQuotes = true;
+        } else if (char === ",") {
+          row.push(field);
+          field = "";
+        } else if (char === "\n") {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else if (char === "\r") {
+          if (text[i + 1] === "\n") {
+            i += 1;
+          }
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else {
+          field += char;
+        }
+      }
+
+      if (field.length || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+
+      return rows;
+    };
+
+    const mapRowsToItems = (rows) => {
+      if (!rows.length) {
+        return { items: [], error: "CSVにデータが見つかりませんでした。" };
+      }
+
+      const header = rows[0].map(normalizeHeader);
+      const titleIndex = header.indexOf("title");
+      const artistIndex = header.indexOf("artist");
+      const textIndex = header.indexOf("text");
+
+      const itemsFromRows = [];
+      rows.slice(1).forEach((cells) => {
+        if (!cells.length || cells.every((cell) => !cell || !cell.trim())) {
+          return;
+        }
+        const title = (cells[titleIndex] ?? cells[0] ?? "").trim();
+        const artist = (cells[artistIndex] ?? cells[1] ?? "").trim();
+        const text = (cells[textIndex] ?? cells[2] ?? "").replace(/\r\n/g, "\n").trim();
+        itemsFromRows.push({ title, author: artist, text });
+      });
+
+      if (!itemsFromRows.length) {
+        return { items: [], error: "ヘッダー以外のデータがありません。" };
+      }
+
+      return { items: itemsFromRows, error: null };
+    };
+
+    const loadFromSheet = async () => {
+      clearLoadError();
+      const url = sheetUrlInput.value.trim();
+      if (!url) {
+        showLoadError("Google SheetsのCSV URLを入力してください。");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const text = await response.text();
+        const rows = parseCSV(text);
+        const { items: loadedItems, error } = mapRowsToItems(rows);
+        if (error) {
+          showLoadError(`${error} ヘッダーは title / artist / text を推奨します。`);
+          return;
+        }
+        items = loadedItems;
+        saveItems();
+        renderList();
+        resetForm();
+        localStorage.setItem(STORAGE_KEY_SHEET_URL, url);
+      } catch (error) {
+        const hint = [
+          "読み込みに失敗しました。",
+          "Google Sheetsを「ウェブに公開」し、CSV形式のURLになっているか確認してください。",
+          "アクセス権が「リンクを知っている全員」になっているかも確認してください。",
+        ].join(" ");
+        showLoadError(hint);
+      } finally {
+        setLoading(false);
+      }
     };
 
     const saveItems = () => {
@@ -598,6 +790,14 @@
       resetForm();
     });
 
+    loadButton.addEventListener("click", () => {
+      loadFromSheet();
+    });
+
+    refreshButton.addEventListener("click", () => {
+      loadFromSheet();
+    });
+
     printButton.addEventListener("click", () => {
       window.print();
     });
@@ -628,9 +828,19 @@
       });
     });
 
+    sheetUrlInput.addEventListener("input", () => {
+      localStorage.setItem(STORAGE_KEY_SHEET_URL, sheetUrlInput.value);
+      clearLoadError();
+    });
+
     const initialize = () => {
       loadItems();
       renderList();
+
+      const savedUrl = localStorage.getItem(STORAGE_KEY_SHEET_URL);
+      if (savedUrl) {
+        sheetUrlInput.value = savedUrl;
+      }
 
       const savedLayout = localStorage.getItem(STORAGE_KEY_LAYOUT) || "one";
       const selected = document.querySelector(`input[name=printLayout][value="${savedLayout}"]`);
