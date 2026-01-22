@@ -484,10 +484,15 @@
         <input id="authorInput" type="text" placeholder="Artist" />
         <span class="hint" id="authorHint">必須</span>
       </label>
-      <label id="descField">
-        本文
-        <textarea id="descInput" placeholder="本文を貼り付けてください。表示言語の本文として保存されます。改行はそのまま反映されます。"></textarea>
-        <span class="hint" id="descHint">必須</span>
+      <label id="descEnField">
+        English text
+        <textarea id="descEnInput" placeholder="English text.改行はそのまま反映されます。"></textarea>
+        <span class="hint" id="descEnHint">必須</span>
+      </label>
+      <label id="descJaField">
+        日本語本文
+        <textarea id="descJaInput" placeholder="日本語本文。改行はそのまま反映されます。"></textarea>
+        <span class="hint" id="descJaHint">任意</span>
       </label>
 
       <div class="actions">
@@ -541,7 +546,8 @@
   <script>
     const titleInput = document.getElementById("titleInput");
     const authorInput = document.getElementById("authorInput");
-    const descInput = document.getElementById("descInput");
+    const descEnInput = document.getElementById("descEnInput");
+    const descJaInput = document.getElementById("descJaInput");
     const addButton = document.getElementById("addButton");
     const printButton = document.getElementById("printButton");
     const clearAllButton = document.getElementById("clearAllButton");
@@ -561,7 +567,8 @@
 
     const titleField = document.getElementById("titleField");
     const authorField = document.getElementById("authorField");
-    const descField = document.getElementById("descField");
+    const descEnField = document.getElementById("descEnField");
+    const descJaField = document.getElementById("descJaField");
 
     const STORAGE_KEY_ITEMS = "captionListItems";
     const STORAGE_KEY_LAYOUT = "captionPrintLayout";
@@ -584,7 +591,8 @@
     const clearFieldErrors = () => {
       setFieldError(titleField, document.getElementById("titleHint"), false, "必須");
       setFieldError(authorField, document.getElementById("authorHint"), false, "必須");
-      setFieldError(descField, document.getElementById("descHint"), false, "必須");
+      setFieldError(descEnField, document.getElementById("descEnHint"), false, "必須");
+      setFieldError(descJaField, document.getElementById("descJaHint"), false, "任意");
     };
 
     const validateInputs = () => {
@@ -599,8 +607,8 @@
         setFieldError(authorField, document.getElementById("authorHint"), true, "作家名を入力してください");
         valid = false;
       }
-      if (!descInput.value.trim()) {
-        setFieldError(descField, document.getElementById("descHint"), true, "本文を入力してください");
+      if (!descEnInput.value.trim()) {
+        setFieldError(descEnField, document.getElementById("descEnHint"), true, "English textを入力してください");
         valid = false;
       }
 
@@ -610,22 +618,25 @@
     const resetForm = () => {
       titleInput.value = "";
       authorInput.value = "";
-      descInput.value = "";
+      descEnInput.value = "";
+      descJaInput.value = "";
       editingIndex = null;
       addButton.textContent = "追加";
       clearFieldErrors();
     };
 
     const normalizeItem = (item) => {
-      const titleEn = (item.titleEn ?? item.title_en ?? item.title ?? "").trim();
+      const titleEn = (item.title_en ?? item.titleEn ?? item.title ?? "").trim();
       const artist = (item.artist ?? item.author ?? "").trim();
-      const textEn = (item.textEn ?? item.text_en ?? item.text ?? "").replace(/\r\n/g, "\n").trim();
-      const textJa = (item.textJa ?? item.text_ja ?? "").replace(/\r\n/g, "\n").trim();
+      const rawEn = (item.text_en ?? item.textEn ?? item.text ?? "").replace(/\r\n/g, "\n").trim();
+      const rawJa = (item.text_ja ?? item.textJa ?? "").replace(/\r\n/g, "\n").trim();
+      const textEn = rawEn || rawJa;
+      const textJa = rawJa;
       return {
-        titleEn,
+        title_en: titleEn,
         artist,
-        textEn,
-        textJa,
+        text_en: textEn,
+        text_ja: textJa,
       };
     };
 
@@ -661,17 +672,17 @@
         const page = document.createElement("section");
         page.className = "measure-page";
 
-        const title = document.createElement("h2");
-        title.className = "caption-title";
-        title.textContent = item.titleEn || "タイトル未入力";
+      const title = document.createElement("h2");
+      title.className = "caption-title";
+      title.textContent = item.title_en || "タイトル未入力";
 
         const author = document.createElement("h3");
         author.className = "caption-author";
         author.textContent = item.artist || "作家名未入力";
 
-        const desc = document.createElement("p");
-        desc.className = "caption-desc";
-        desc.textContent = item.textEn || item.textJa || "本文未入力";
+      const desc = document.createElement("p");
+      desc.className = "caption-desc";
+      desc.textContent = item.text_en || "English本文が未入力です";
 
         page.appendChild(title);
         page.appendChild(author);
@@ -704,7 +715,11 @@
     };
 
     const normalizeHeader = (value) =>
-      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/[\s_]+/g, "");
+      value
+        .trim()
+        .replace(/^\uFEFF/, "")
+        .replace(/[\s\u3000_-]+/g, "")
+        .toLowerCase();
 
     const parseCSV = (text) => {
       const rows = [];
@@ -766,9 +781,13 @@
       const titleIndex = header.indexOf("title");
       const artistIndex = header.indexOf("artist");
       const authorIndex = header.indexOf("author");
-      const textEnIndex = header.indexOf("texten");
+      const textEnIndex = header.findIndex((key) =>
+        ["texten", "en", "english", "engtext"].includes(key)
+      );
       const textIndex = header.indexOf("text");
-      const textJaIndex = header.indexOf("textja");
+      const textJaIndex = header.findIndex((key) =>
+        ["textja", "ja", "japanese", "jptext", "textjp"].includes(key)
+      );
 
       const itemsFromRows = [];
       rows.slice(1).forEach((cells) => {
@@ -781,12 +800,14 @@
           .replace(/\r\n/g, "\n")
           .trim();
         const textJa = (cells[textJaIndex] ?? "").replace(/\r\n/g, "\n").trim();
-        itemsFromRows.push({
-          titleEn,
-          artist,
-          textEn,
-          textJa,
-        });
+        itemsFromRows.push(
+          normalizeItem({
+            title_en: titleEn,
+            artist,
+            text_en: textEn,
+            text_ja: textJa,
+          })
+        );
       });
 
       if (!itemsFromRows.length) {
@@ -818,6 +839,9 @@
           return;
         }
         items = loadedItems.map((item) => normalizeItem(item));
+        if (items[0]) {
+          console.log("text_ja exists:", Boolean(items[0].text_ja));
+        }
         saveItems();
         renderList();
         resetForm();
@@ -881,7 +905,7 @@
 
         const title = document.createElement("h2");
         title.className = "caption-title";
-        title.textContent = item.titleEn || "タイトル未入力";
+        title.textContent = item.title_en || "タイトル未入力";
 
         const author = document.createElement("h3");
         author.className = "caption-author";
@@ -890,17 +914,17 @@
         const descEn = document.createElement("p");
         descEn.className = "caption-desc caption-text";
         descEn.dataset.lang = "en";
-        descEn.textContent = item.textEn || item.textJa || "本文未入力";
+        descEn.textContent = item.text_en || "English本文が未入力です";
 
         const descJa = document.createElement("p");
         descJa.className = "caption-desc caption-text";
         descJa.dataset.lang = "ja";
-        descJa.textContent = item.textJa || item.textEn || "本文未入力";
+        descJa.textContent = item.text_ja || "日本語本文が未入力です";
 
-        const hasJa = item.textJa.length > 0;
+        const hasJa = item.text_ja.length > 0;
         const fitsEnglish = measureEnglishFits(item, measurementContext);
         const fallbackLong =
-          item.textEn.length >= LONG_TEXT_THRESHOLD || item.textJa.length >= LONG_TEXT_THRESHOLD;
+          item.text_en.length >= LONG_TEXT_THRESHOLD || item.text_ja.length >= LONG_TEXT_THRESHOLD;
         const useTwoPages =
           fitsEnglish === null ? fallbackLong && hasJa : !fitsEnglish && hasJa;
         const status = document.createElement("div");
@@ -918,10 +942,10 @@
         editButton.type = "button";
         editButton.textContent = "編集";
         editButton.addEventListener("click", () => {
-          const lang = getCurrentLanguage();
-          titleInput.value = item.titleEn;
+          titleInput.value = item.title_en;
           authorInput.value = item.artist;
-          descInput.value = lang === "ja" ? item.textJa || item.textEn : item.textEn || item.textJa;
+          descEnInput.value = item.text_en;
+          descJaInput.value = item.text_ja;
           editingIndex = index;
           addButton.textContent = "更新";
           window.scrollTo({ top: 0, behavior: "smooth" });
@@ -981,10 +1005,10 @@
 
         captionList.appendChild(card);
 
-        const printTitle = item.titleEn || "タイトル未入力";
+        const printTitle = item.title_en || "タイトル未入力";
         const printArtist = item.artist || "作家名未入力";
-        const printTextEn = item.textEn || item.textJa || "本文未入力";
-        const printTextJa = item.textJa;
+        const printTextEn = item.text_en || "English本文が未入力です";
+        const printTextJa = item.text_ja || "日本語本文が未入力です";
 
         const createPrintPage = (lang, text, forceBreak) => {
           const page = document.createElement("section");
@@ -1041,34 +1065,22 @@
         return;
       }
 
-      const currentLanguage = getCurrentLanguage();
       const baseEntry = {
-        titleEn: titleInput.value.trim(),
+        title_en: titleInput.value.trim(),
         artist: authorInput.value.trim(),
+        text_en: descEnInput.value.trim(),
+        text_ja: descJaInput.value.trim(),
       };
-      const descValue = descInput.value.trim();
 
       if (editingIndex !== null) {
         const existing = normalizeItem(items[editingIndex] ?? {});
-        const updated = {
+        const updated = normalizeItem({
           ...existing,
           ...baseEntry,
-          textEn: existing.textEn,
-          textJa: existing.textJa,
-        };
-        if (currentLanguage === "ja") {
-          updated.textJa = descValue;
-        } else {
-          updated.textEn = descValue;
-        }
+        });
         items[editingIndex] = updated;
       } else {
-        const entry = normalizeItem({
-          ...baseEntry,
-          textEn: currentLanguage === "en" ? descValue : "",
-          textJa: currentLanguage === "ja" ? descValue : "",
-        });
-        items.push(entry);
+        items.push(normalizeItem(baseEntry));
       }
 
       saveItems();
@@ -1112,18 +1124,11 @@
     languageRadios.forEach((radio) => {
       radio.addEventListener("change", (event) => {
         setCurrentLanguage(event.target.value);
-        if (editingIndex !== null && items[editingIndex]) {
-          const currentItem = normalizeItem(items[editingIndex]);
-          descInput.value =
-            event.target.value === "ja"
-              ? currentItem.textJa || currentItem.textEn
-              : currentItem.textEn || currentItem.textJa;
-        }
         renderList();
       });
     });
 
-    [titleInput, authorInput, descInput].forEach((input) => {
+    [titleInput, authorInput, descEnInput, descJaInput].forEach((input) => {
       input.addEventListener("input", () => {
         if (editingIndex !== null) {
           return;
