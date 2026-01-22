@@ -262,6 +262,12 @@
       white-space: pre-wrap;
     }
 
+    .caption-status {
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
     .caption-text {
       display: none;
     }
@@ -277,6 +283,45 @@
 
     .print-only {
       display: none;
+    }
+
+    .measure-root {
+      position: absolute;
+      left: -99999px;
+      top: 0;
+      visibility: hidden;
+      width: calc(210mm - 36mm);
+      padding: 0;
+    }
+
+    .measure-root .caption-title {
+      font-size: 20pt;
+    }
+
+    .measure-root .caption-author {
+      font-size: 13pt;
+    }
+
+    .measure-root .caption-desc {
+      font-size: 11.5pt;
+      white-space: pre-wrap;
+    }
+
+    .measure-page {
+      display: grid;
+      gap: 10px;
+      padding: 0;
+      border: none;
+    }
+
+    .measure-a4 {
+      width: 210mm;
+      height: 297mm;
+    }
+
+    .measure-mm {
+      width: 1mm;
+      height: 1mm;
     }
 
     .card-actions {
@@ -475,6 +520,9 @@
           2キャプション = 1ページ
         </label>
       </div>
+      <div class="button-row">
+        <button type="button" id="recalcButton">再判定</button>
+      </div>
     </section>
 
     <section class="panel" aria-label="キャプション一覧">
@@ -484,6 +532,11 @@
       <div class="caption-list print-only" id="printList"></div>
     </section>
   </main>
+
+  <div class="measure-root" id="measureRoot" aria-hidden="true">
+    <div class="measure-a4" id="measureA4"></div>
+    <div class="measure-mm" id="measureMm"></div>
+  </div>
 
   <script>
     const titleInput = document.getElementById("titleInput");
@@ -501,6 +554,10 @@
     const loadStatus = document.getElementById("loadStatus");
     const loadError = document.getElementById("loadError");
     const languageRadios = document.querySelectorAll("input[name=language]");
+    const recalcButton = document.getElementById("recalcButton");
+    const measureRoot = document.getElementById("measureRoot");
+    const measureA4 = document.getElementById("measureA4");
+    const measureMm = document.getElementById("measureMm");
 
     const titleField = document.getElementById("titleField");
     const authorField = document.getElementById("authorField");
@@ -511,6 +568,8 @@
     const STORAGE_KEY_SHEET_URL = "captionSheetUrl";
     const STORAGE_KEY_LANGUAGE = "captionLanguage";
     const LONG_TEXT_THRESHOLD = 500;
+    const PRINT_MARGIN_MM = 18;
+    const PRINT_SAFETY_PX = 10;
 
     let items = [];
     let editingIndex = null;
@@ -577,6 +636,55 @@
       document.body.classList.toggle("lang-en", lang === "en");
       document.body.classList.toggle("lang-ja", lang === "ja");
       localStorage.setItem(STORAGE_KEY_LANGUAGE, lang);
+    };
+
+    const getMeasurementContext = () => {
+      if (!measureRoot || !measureA4 || !measureMm) {
+        return null;
+      }
+      const mmSize = measureMm.getBoundingClientRect().height;
+      const a4Rect = measureA4.getBoundingClientRect();
+      if (!mmSize || !a4Rect.height) {
+        return null;
+      }
+      const usableHeight = a4Rect.height - mmSize * PRINT_MARGIN_MM * 2 - PRINT_SAFETY_PX;
+      return {
+        usableHeight,
+      };
+    };
+
+    const measureEnglishFits = (item, context) => {
+      if (!context) {
+        return null;
+      }
+      try {
+        const page = document.createElement("section");
+        page.className = "measure-page";
+
+        const title = document.createElement("h2");
+        title.className = "caption-title";
+        title.textContent = item.titleEn || "タイトル未入力";
+
+        const author = document.createElement("h3");
+        author.className = "caption-author";
+        author.textContent = item.artist || "作家名未入力";
+
+        const desc = document.createElement("p");
+        desc.className = "caption-desc";
+        desc.textContent = item.textEn || item.textJa || "本文未入力";
+
+        page.appendChild(title);
+        page.appendChild(author);
+        page.appendChild(desc);
+        measureRoot.appendChild(page);
+
+        const height = page.getBoundingClientRect().height;
+        page.remove();
+
+        return height <= context.usableHeight;
+      } catch (error) {
+        return null;
+      }
     };
 
     const setLoading = (isLoading) => {
@@ -756,6 +864,7 @@
 
       const currentLanguage = getCurrentLanguage();
       const printPages = [];
+      const measurementContext = getMeasurementContext();
 
       items.forEach((rawItem, index) => {
         const item = normalizeItem(rawItem);
@@ -787,6 +896,20 @@
         descJa.className = "caption-desc caption-text";
         descJa.dataset.lang = "ja";
         descJa.textContent = item.textJa || item.textEn || "本文未入力";
+
+        const hasJa = item.textJa.length > 0;
+        const fitsEnglish = measureEnglishFits(item, measurementContext);
+        const fallbackLong =
+          item.textEn.length >= LONG_TEXT_THRESHOLD || item.textJa.length >= LONG_TEXT_THRESHOLD;
+        const useTwoPages =
+          fitsEnglish === null ? fallbackLong && hasJa : !fitsEnglish && hasJa;
+        const status = document.createElement("div");
+        status.className = "caption-status";
+        status.textContent = useTwoPages
+          ? "2ページ（EN+JP）"
+          : hasJa
+          ? "1ページOK"
+          : "1ページ（ENのみ）";
 
         const actions = document.createElement("div");
         actions.className = "card-actions";
@@ -851,15 +974,13 @@
 
         card.appendChild(header);
         card.appendChild(author);
+        card.appendChild(status);
         card.appendChild(descEn);
         card.appendChild(descJa);
         card.appendChild(actions);
 
         captionList.appendChild(card);
 
-        const longText =
-          item.textEn.length >= LONG_TEXT_THRESHOLD || item.textJa.length >= LONG_TEXT_THRESHOLD;
-        const hasJa = item.textJa.length > 0;
         const printTitle = item.titleEn || "タイトル未入力";
         const printArtist = item.artist || "作家名未入力";
         const printTextEn = item.textEn || item.textJa || "本文未入力";
@@ -893,7 +1014,7 @@
           printList.appendChild(page);
         };
 
-        if (longText && hasJa) {
+        if (useTwoPages) {
           createPrintPage("en", printTextEn, true);
           createPrintPage("ja", printTextJa, true);
         } else {
@@ -982,6 +1103,10 @@
       radio.addEventListener("change", (event) => {
         applyLayout(event.target.value);
       });
+    });
+
+    recalcButton.addEventListener("click", () => {
+      renderList();
     });
 
     languageRadios.forEach((radio) => {
