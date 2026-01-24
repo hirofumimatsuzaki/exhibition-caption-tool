@@ -158,6 +158,31 @@
       gap: 12px;
     }
 
+    .update-banner {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #fffaf2;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      padding: 12px 14px;
+      border-radius: 12px;
+      display: none;
+      align-items: center;
+      gap: 12px;
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+      z-index: 999;
+    }
+
+    .update-banner button {
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--ink);
+      color: #fff;
+      font-size: 0.85rem;
+    }
+
     .button-row {
       display: grid;
       gap: 10px;
@@ -442,6 +467,11 @@
       </div>
     </section>
   </main>
+
+  <div class="update-banner" id="updateBanner" role="status" aria-live="polite">
+    <span>新しいバージョンがあります。</span>
+    <button type="button" id="reloadButton">再読み込み</button>
+  </div>
 
   <script>
     const titleInput = document.getElementById("titleInput");
@@ -855,8 +885,46 @@
     initialize();
 
     if ("serviceWorker" in navigator) {
+      const updateBanner = document.getElementById("updateBanner");
+      const reloadButton = document.getElementById("reloadButton");
+      let newWorker = null;
+
+      const showUpdateBanner = (worker) => {
+        newWorker = worker;
+        updateBanner.style.display = "flex";
+      };
+
+      reloadButton.addEventListener("click", () => {
+        if (newWorker) {
+          newWorker.postMessage({ type: "SKIP_WAITING" });
+        }
+      });
+
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        window.location.reload();
+      });
+
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(() => {});
+        navigator.serviceWorker.register("./sw.js").then((registration) => {
+          if (registration.waiting) {
+            showUpdateBanner(registration.waiting);
+          }
+
+          registration.addEventListener("updatefound", () => {
+            const installingWorker = registration.installing;
+            if (!installingWorker) {
+              return;
+            }
+            installingWorker.addEventListener("statechange", () => {
+              if (
+                installingWorker.state === "installed" &&
+                navigator.serviceWorker.controller
+              ) {
+                showUpdateBanner(installingWorker);
+              }
+            });
+          });
+        }).catch(() => {});
       });
     }
   </script>

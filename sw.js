@@ -1,4 +1,4 @@
-const CACHE_NAME = "caption-tool-v1";
+const CACHE_NAME = "caption-tool-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -23,6 +23,12 @@ self.addEventListener("activate", (event) => {
       )
     ).then(() => self.clients.claim())
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("fetch", (event) => {
