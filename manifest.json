@@ -1,5 +1,5 @@
 {
-  "name": "展示キャプション管理ツール",
+  "name": "キャプション管理ツール",
   "short_name": "CaptionTool",
   "start_url": ".",
   "display": "standalone",
