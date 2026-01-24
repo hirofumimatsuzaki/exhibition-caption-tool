@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>展示キャプション管理ツール</title>
+  <meta name="theme-color" content="#f6f2ea" />
+  <link rel="manifest" href="manifest.json" />
   <style>
     :root {
       --bg: #f6f2ea;
@@ -851,6 +853,12 @@
     };
 
     initialize();
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>
