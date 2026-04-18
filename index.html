@@ -289,6 +289,19 @@
       white-space: pre-wrap;
     }
 
+    .caption-block {
+      display: grid;
+      gap: 6px;
+    }
+
+    .caption-label {
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+      font-size: 0.8rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
     .card-actions {
       display: grid;
       gap: 8px;
@@ -299,6 +312,11 @@
     .empty {
       color: #b7ada3;
       font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    }
+
+    .print-only,
+    .measure-root {
+      display: none;
     }
 
     @media (max-width: 720px) {
@@ -339,6 +357,7 @@
       .controls,
       .card-actions,
       .caption-index,
+      .screen-only,
       button,
       .empty {
         display: none !important;
@@ -355,6 +374,10 @@
         gap: 0;
       }
 
+      .print-only {
+        display: grid !important;
+      }
+
       .caption-card {
         border: none;
         padding: 0;
@@ -362,12 +385,14 @@
         gap: 10px;
       }
 
-      .print-one .caption-card {
+      .print-one .caption-card,
+      .print-page-break {
         break-after: page;
         page-break-after: always;
       }
 
-      .print-one .caption-card:last-child {
+      .print-one .caption-card:last-child,
+      .print-page-break:last-child {
         break-after: auto;
         page-break-after: auto;
       }
@@ -398,6 +423,10 @@
       .caption-desc {
         font-size: 11.5pt;
       }
+
+      .caption-label {
+        font-size: 9pt;
+      }
     }
   </style>
 </head>
@@ -413,7 +442,7 @@
         <label for="sheetUrlInput">
           Google Sheets CSV URL
           <input id="sheetUrlInput" type="url" placeholder="https://docs.google.com/spreadsheets/..." />
-          <span class="hint">ウェブに公開したCSVのURLを貼り付けてください。</span>
+          <span class="hint">title_en / artist / text_ja / text_en に対応します。</span>
         </label>
         <div class="load-actions">
           <button type="button" class="primary" id="loadButton">読み込み</button>
@@ -462,9 +491,10 @@
     </section>
 
     <section class="panel" aria-label="キャプション一覧">
-      <div class="caption-list" id="captionList">
+      <div class="caption-list screen-only" id="captionList">
         <p class="caption-desc empty" id="emptyState">まだキャプションがありません。</p>
       </div>
+      <div class="caption-list print-only" id="printList"></div>
     </section>
   </main>
 
@@ -472,6 +502,8 @@
     <span>新しいバージョンがあります。</span>
     <button type="button" id="reloadButton">再読み込み</button>
   </div>
+
+  <div class="measure-root" id="measureRoot" aria-hidden="true"></div>
 
   <script>
     const titleInput = document.getElementById("titleInput");
@@ -481,12 +513,14 @@
     const printButton = document.getElementById("printButton");
     const clearAllButton = document.getElementById("clearAllButton");
     const captionList = document.getElementById("captionList");
+    const printList = document.getElementById("printList");
     const emptyState = document.getElementById("emptyState");
     const sheetUrlInput = document.getElementById("sheetUrlInput");
     const loadButton = document.getElementById("loadButton");
     const refreshButton = document.getElementById("refreshButton");
     const loadStatus = document.getElementById("loadStatus");
     const loadError = document.getElementById("loadError");
+    const measureRoot = document.getElementById("measureRoot");
 
     const titleField = document.getElementById("titleField");
     const authorField = document.getElementById("authorField");
@@ -495,9 +529,20 @@
     const STORAGE_KEY_ITEMS = "captionListItems";
     const STORAGE_KEY_LAYOUT = "captionPrintLayout";
     const STORAGE_KEY_SHEET_URL = "captionSheetUrl";
+    const FALLBACK_BILINGUAL_THRESHOLD = 500;
+    const PRINT_MARGIN_MM = 18;
+    const PRINT_SAFETY_PX = 10;
 
     let items = [];
     let editingIndex = null;
+
+    const normalizeItem = (item) => ({
+      title: (item.title ?? item.title_en ?? "").trim(),
+      author: (item.author ?? item.artist ?? "").trim(),
+      text: (item.text ?? item.text_ja ?? item.text_en ?? "").replace(/\r\n/g, "\n").trim(),
+      textJa: (item.textJa ?? item.text_ja ?? item.text ?? "").replace(/\r\n/g, "\n").trim(),
+      textEn: (item.textEn ?? item.text_en ?? item.text ?? "").replace(/\r\n/g, "\n").trim(),
+    });
 
     const setFieldError = (field, hint, hasError, message) => {
       field.classList.toggle("field-error", hasError);
@@ -558,7 +603,7 @@
     };
 
     const normalizeHeader = (value) =>
-      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/\s+/g, "");
+      value.trim().replace(/^\uFEFF/, "").toLowerCase().replace(/[\s\u3000_-]+/g, "");
 
     const parseCSV = (text) => {
       const rows = [];
@@ -616,9 +661,11 @@
       }
 
       const header = rows[0].map(normalizeHeader);
-      const titleIndex = header.indexOf("title");
+      const titleIndex = header.indexOf("titleen") !== -1 ? header.indexOf("titleen") : header.indexOf("title");
       const artistIndex = header.indexOf("artist");
       const textIndex = header.indexOf("text");
+      const textEnIndex = header.findIndex((key) => ["texten", "en", "english", "engtext"].includes(key));
+      const textJaIndex = header.findIndex((key) => ["textja", "ja", "japanese", "jptext", "textjp"].includes(key));
 
       const itemsFromRows = [];
       rows.slice(1).forEach((cells) => {
@@ -628,7 +675,9 @@
         const title = (cells[titleIndex] ?? cells[0] ?? "").trim();
         const artist = (cells[artistIndex] ?? cells[1] ?? "").trim();
         const text = (cells[textIndex] ?? cells[2] ?? "").replace(/\r\n/g, "\n").trim();
-        itemsFromRows.push({ title, author: artist, text });
+        const textEn = (cells[textEnIndex] ?? text).replace(/\r\n/g, "\n").trim();
+        const textJa = (cells[textJaIndex] ?? text).replace(/\r\n/g, "\n").trim();
+        itemsFromRows.push(normalizeItem({ title, author: artist, text, textEn, textJa }));
       });
 
       if (!itemsFromRows.length) {
@@ -656,7 +705,7 @@
         const rows = parseCSV(text);
         const { items: loadedItems, error } = mapRowsToItems(rows);
         if (error) {
-          showLoadError(`${error} ヘッダーは title / artist / text を推奨します。`);
+          showLoadError(`${error} ヘッダーは title_en / artist / text_ja / text_en を推奨します。`);
           return;
         }
         items = loadedItems;
@@ -677,7 +726,10 @@
     };
 
     const saveItems = () => {
-      localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
+      localStorage.setItem(
+        STORAGE_KEY_ITEMS,
+        JSON.stringify(items.map((item) => normalizeItem(item)))
+      );
     };
 
     const loadItems = () => {
@@ -688,10 +740,140 @@
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          items = parsed;
+          items = parsed.map((item) => normalizeItem(item));
         }
       } catch (error) {
         localStorage.removeItem(STORAGE_KEY_ITEMS);
+      }
+    };
+
+    const appendTextBlock = (container, labelText, bodyText) => {
+      const block = document.createElement("section");
+      block.className = "caption-block";
+
+      const label = document.createElement("div");
+      label.className = "caption-label";
+      label.textContent = labelText;
+
+      const desc = document.createElement("p");
+      desc.className = "caption-desc";
+      desc.textContent = bodyText;
+
+      block.appendChild(label);
+      block.appendChild(desc);
+      container.appendChild(block);
+    };
+
+    const createPrintPage = (item, blocks) => {
+      const page = document.createElement("article");
+      page.className = "caption-card print-page-break";
+
+      const title = document.createElement("h2");
+      title.className = "caption-title";
+      title.textContent = item.title || "タイトル未入力";
+
+      const author = document.createElement("h3");
+      author.className = "caption-author";
+      author.textContent = item.author || "作家名未入力";
+
+      page.appendChild(title);
+      page.appendChild(author);
+      blocks.forEach((block) => appendTextBlock(page, block.label, block.text));
+      return page;
+    };
+
+    const getPrintableHeight = () => {
+      const probe = document.createElement("div");
+      probe.style.width = "210mm";
+      probe.style.height = "297mm";
+      probe.style.position = "absolute";
+      probe.style.left = "-99999px";
+      probe.style.top = "0";
+      probe.style.visibility = "hidden";
+      measureRoot.appendChild(probe);
+
+      const mmProbe = document.createElement("div");
+      mmProbe.style.height = "1mm";
+      mmProbe.style.position = "absolute";
+      mmProbe.style.left = "-99999px";
+      mmProbe.style.top = "0";
+      mmProbe.style.visibility = "hidden";
+      measureRoot.appendChild(mmProbe);
+
+      const a4Height = probe.clientHeight;
+      const mmPx = mmProbe.getBoundingClientRect().height;
+
+      probe.remove();
+      mmProbe.remove();
+
+      if (!a4Height || !mmPx) {
+        return null;
+      }
+
+      return a4Height - mmPx * (PRINT_MARGIN_MM * 2) - PRINT_SAFETY_PX;
+    };
+
+    const fitsSinglePage = (item) => {
+      const printableHeight = getPrintableHeight();
+      if (!printableHeight) {
+        return null;
+      }
+
+      const measurePage = createPrintPage(item, [
+        { label: "日本語", text: item.textJa || item.text || "本文未入力" },
+        { label: "English", text: item.textEn || item.text || "Text is empty." },
+      ]);
+
+      measurePage.style.position = "absolute";
+      measurePage.style.left = "-99999px";
+      measurePage.style.top = "0";
+      measurePage.style.width = "calc(210mm - 36mm)";
+      measureRoot.appendChild(measurePage);
+      const measuredHeight = measurePage.getBoundingClientRect().height;
+      measurePage.remove();
+
+      return measuredHeight <= printableHeight;
+    };
+
+    const renderPrintList = () => {
+      printList.innerHTML = "";
+
+      items.map((item) => normalizeItem(item)).forEach((item) => {
+        const hasBothLanguages = Boolean(item.textJa && item.textEn);
+        const fits = hasBothLanguages ? fitsSinglePage(item) : true;
+        const fallbackSplit =
+          (item.textJa.length >= FALLBACK_BILINGUAL_THRESHOLD ||
+            item.textEn.length >= FALLBACK_BILINGUAL_THRESHOLD);
+        const shouldSplit = hasBothLanguages && (fits === null ? fallbackSplit : !fits);
+
+        if (shouldSplit) {
+          printList.appendChild(
+            createPrintPage(item, [{ label: "日本語", text: item.textJa || "本文未入力" }])
+          );
+          printList.appendChild(
+            createPrintPage(item, [{ label: "English", text: item.textEn || "Text is empty." }])
+          );
+          return;
+        }
+
+        const blocks = [];
+        if (item.textJa) {
+          blocks.push({ label: "日本語", text: item.textJa });
+        }
+        if (item.textEn) {
+          blocks.push({ label: "English", text: item.textEn });
+        }
+        if (!blocks.length) {
+          blocks.push({ label: "本文", text: item.text || "本文未入力" });
+        }
+        printList.appendChild(createPrintPage(item, blocks));
+      });
+
+      const pages = printList.querySelectorAll(".print-page-break");
+      const lastPage = pages[pages.length - 1];
+      if (lastPage) {
+        lastPage.style.breakAfter = "auto";
+        lastPage.style.pageBreakAfter = "auto";
       }
     };
 
@@ -699,10 +881,11 @@
       captionList.innerHTML = "";
       if (!items.length) {
         captionList.appendChild(emptyState);
+        printList.innerHTML = "";
         return;
       }
 
-      items.forEach((item, index) => {
+      items.map((item) => normalizeItem(item)).forEach((item, index) => {
         const card = document.createElement("article");
         card.className = "caption-card";
 
@@ -723,7 +906,7 @@
 
         const desc = document.createElement("p");
         desc.className = "caption-desc";
-        desc.textContent = item.text;
+        desc.textContent = item.textJa || item.textEn || item.text;
 
         const actions = document.createElement("div");
         actions.className = "card-actions";
@@ -734,7 +917,7 @@
         editButton.addEventListener("click", () => {
           titleInput.value = item.title;
           authorInput.value = item.author;
-          descInput.value = item.text;
+          descInput.value = item.textJa || item.textEn || item.text;
           editingIndex = index;
           addButton.textContent = "更新";
           window.scrollTo({ top: 0, behavior: "smooth" });
@@ -792,6 +975,8 @@
 
         captionList.appendChild(card);
       });
+
+      renderPrintList();
     };
 
     const applyLayout = (layout) => {
@@ -812,9 +997,13 @@
       };
 
       if (editingIndex !== null) {
-        items[editingIndex] = entry;
+        items[editingIndex] = normalizeItem({
+          ...items[editingIndex],
+          ...entry,
+          textJa: descInput.value.trim(),
+        });
       } else {
-        items.push(entry);
+        items.push(normalizeItem({ ...entry, textJa: entry.text }));
       }
 
       saveItems();
@@ -831,6 +1020,7 @@
     });
 
     printButton.addEventListener("click", () => {
+      renderPrintList();
       window.print();
     });
 
