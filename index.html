@@ -525,12 +525,20 @@
     let items = [];
     let editingIndex = null;
 
+    const cleanCaptionText = (value) =>
+      value
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .filter((line) => !/^\s*(日本語|english|ENGLISH)\s*$/.test(line))
+        .join("\n")
+        .trim();
+
     const normalizeItem = (item) => ({
       title: (item.title ?? item.title_en ?? "").trim(),
       author: (item.author ?? item.artist ?? "").trim(),
-      text: (item.text ?? "").replace(/\r\n/g, "\n").trim(),
-      textJa: (item.textJa ?? item.text_ja ?? "").replace(/\r\n/g, "\n").trim(),
-      textEn: (item.textEn ?? item.text_en ?? item.text ?? "").replace(/\r\n/g, "\n").trim(),
+      text: cleanCaptionText(item.text ?? ""),
+      textJa: cleanCaptionText(item.textJa ?? item.text_ja ?? ""),
+      textEn: cleanCaptionText(item.textEn ?? item.text_en ?? item.text ?? ""),
     });
 
     const setFieldError = (field, hint, hasError, message) => {
@@ -823,7 +831,8 @@
       printList.innerHTML = "";
 
       items.map((item) => normalizeItem(item)).forEach((item) => {
-        const hasBothLanguages = Boolean(item.textJa && item.textEn);
+        const sameTexts = Boolean(item.textJa && item.textEn && item.textJa === item.textEn);
+        const hasBothLanguages = Boolean(item.textJa && item.textEn && !sameTexts);
         const fits = hasBothLanguages ? fitsSinglePage(item) : true;
         const fallbackSplit =
           (item.textJa.length >= FALLBACK_BILINGUAL_THRESHOLD ||
@@ -844,7 +853,7 @@
         if (item.textJa) {
           blocks.push({ label: "日本語", text: item.textJa });
         }
-        if (item.textEn) {
+        if (item.textEn && !sameTexts) {
           blocks.push({ label: "English", text: item.textEn });
         }
         if (!blocks.length) {
