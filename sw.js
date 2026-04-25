@@ -1,4 +1,4 @@
-const CACHE_NAME = "caption-tool-v2";
+const CACHE_NAME = "caption-tool-v3";
 const ASSETS = [
   "./",
   "./index.html",

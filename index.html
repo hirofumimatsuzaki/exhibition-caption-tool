@@ -529,7 +529,7 @@
       value
         .replace(/\r\n/g, "\n")
         .split("\n")
-        .filter((line) => !/^\s*(日本語|english|ENGLISH)\s*$/.test(line))
+        .filter((line) => !/^\s*(日本語|英語|english)(?:\s*[:：-].*)?\s*$/i.test(line))
         .join("\n")
         .trim();
 
