@@ -528,8 +528,8 @@
     const normalizeItem = (item) => ({
       title: (item.title ?? item.title_en ?? "").trim(),
       author: (item.author ?? item.artist ?? "").trim(),
-      text: (item.text ?? item.text_ja ?? item.text_en ?? "").replace(/\r\n/g, "\n").trim(),
-      textJa: (item.textJa ?? item.text_ja ?? item.text ?? "").replace(/\r\n/g, "\n").trim(),
+      text: (item.text ?? "").replace(/\r\n/g, "\n").trim(),
+      textJa: (item.textJa ?? item.text_ja ?? "").replace(/\r\n/g, "\n").trim(),
       textEn: (item.textEn ?? item.text_en ?? item.text ?? "").replace(/\r\n/g, "\n").trim(),
     });
 
@@ -665,7 +665,7 @@
         const artist = (cells[artistIndex] ?? cells[1] ?? "").trim();
         const text = (cells[textIndex] ?? cells[2] ?? "").replace(/\r\n/g, "\n").trim();
         const textEn = (cells[textEnIndex] ?? text).replace(/\r\n/g, "\n").trim();
-        const textJa = (cells[textJaIndex] ?? text).replace(/\r\n/g, "\n").trim();
+        const textJa = (cells[textJaIndex] ?? "").replace(/\r\n/g, "\n").trim();
         itemsFromRows.push(normalizeItem({ title, author: artist, text, textEn, textJa }));
       });
 
