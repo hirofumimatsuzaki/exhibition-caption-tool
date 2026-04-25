@@ -291,15 +291,7 @@
 
     .caption-block {
       display: grid;
-      gap: 6px;
-    }
-
-    .caption-label {
-      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
-      font-size: 0.8rem;
-      color: var(--muted);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      gap: 0;
     }
 
     .card-actions {
@@ -424,9 +416,6 @@
         font-size: 11.5pt;
       }
 
-      .caption-label {
-        font-size: 9pt;
-      }
     }
   </style>
 </head>
@@ -747,19 +736,14 @@
       }
     };
 
-    const appendTextBlock = (container, labelText, bodyText) => {
+    const appendTextBlock = (container, bodyText) => {
       const block = document.createElement("section");
       block.className = "caption-block";
-
-      const label = document.createElement("div");
-      label.className = "caption-label";
-      label.textContent = labelText;
 
       const desc = document.createElement("p");
       desc.className = "caption-desc";
       desc.textContent = bodyText;
 
-      block.appendChild(label);
       block.appendChild(desc);
       container.appendChild(block);
     };
@@ -778,7 +762,7 @@
 
       page.appendChild(title);
       page.appendChild(author);
-      blocks.forEach((block) => appendTextBlock(page, block.label, block.text));
+      blocks.forEach((block) => appendTextBlock(page, block.text));
       return page;
     };
 
