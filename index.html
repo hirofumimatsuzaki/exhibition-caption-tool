@@ -301,6 +301,24 @@
       font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
     }
 
+    .inline-editor {
+      display: grid;
+      gap: 12px;
+      margin-top: 8px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .inline-editor textarea {
+      min-height: 160px;
+    }
+
+    .inline-actions {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    }
+
     .empty {
       color: #b7ada3;
       font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
@@ -461,6 +479,7 @@
         <div class="button-row">
           <button type="button" class="primary" id="addButton">追加</button>
           <button type="button" id="printButton">まとめて印刷（PDF）</button>
+          <button type="button" id="exportButton">CSVエクスポート</button>
           <button type="button" id="clearAllButton">全消去</button>
         </div>
       </div>
@@ -500,6 +519,7 @@
     const descInput = document.getElementById("descInput");
     const addButton = document.getElementById("addButton");
     const printButton = document.getElementById("printButton");
+    const exportButton = document.getElementById("exportButton");
     const clearAllButton = document.getElementById("clearAllButton");
     const captionList = document.getElementById("captionList");
     const printList = document.getElementById("printList");
@@ -578,7 +598,6 @@
       titleInput.value = "";
       authorInput.value = "";
       descInput.value = "";
-      editingIndex = null;
       addButton.textContent = "追加";
       clearFieldErrors();
     };
@@ -870,6 +889,48 @@
       }
     };
 
+    const printWithFreshPreview = () => {
+      renderPrintList();
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.print();
+        });
+      });
+    };
+
+    const escapeCsvCell = (value) => {
+      const normalized = String(value ?? "").replace(/\r\n/g, "\n");
+      return `"${normalized.replace(/"/g, "\"\"")}"`;
+    };
+
+    const exportCsv = () => {
+      const rows = [
+        ["title_en", "artist", "text_ja", "text_en"],
+        ...items.map((item) => {
+          const normalized = normalizeItem(item);
+          return [
+            normalized.title,
+            normalized.author,
+            normalized.textJa || normalized.text,
+            normalized.textEn || normalized.text,
+          ];
+        }),
+      ];
+
+      const csv = `${rows
+        .map((row) => row.map((cell) => escapeCsvCell(cell)).join(","))
+        .join("\r\n")}\r\n`;
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "captions-export.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    };
+
     const renderList = () => {
       captionList.innerHTML = "";
       if (!items.length) {
@@ -908,12 +969,8 @@
         editButton.type = "button";
         editButton.textContent = "編集";
         editButton.addEventListener("click", () => {
-          titleInput.value = item.title;
-          authorInput.value = item.author;
-          descInput.value = item.textJa || item.textEn || item.text;
           editingIndex = index;
-          addButton.textContent = "更新";
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          renderList();
         });
 
         const deleteButton = document.createElement("button");
@@ -966,6 +1023,69 @@
         card.appendChild(desc);
         card.appendChild(actions);
 
+        if (editingIndex === index) {
+          const editor = document.createElement("div");
+          editor.className = "inline-editor";
+
+          const titleEdit = document.createElement("input");
+          titleEdit.type = "text";
+          titleEdit.value = item.title;
+          titleEdit.placeholder = "作品タイトル";
+
+          const authorEdit = document.createElement("input");
+          authorEdit.type = "text";
+          authorEdit.value = item.author;
+          authorEdit.placeholder = "作家名";
+
+          const descEdit = document.createElement("textarea");
+          descEdit.value = item.textJa || item.textEn || item.text;
+          descEdit.placeholder = "本文";
+
+          const inlineActions = document.createElement("div");
+          inlineActions.className = "inline-actions";
+
+          const saveEditButton = document.createElement("button");
+          saveEditButton.type = "button";
+          saveEditButton.className = "primary";
+          saveEditButton.textContent = "保存";
+          saveEditButton.addEventListener("click", () => {
+            const nextTitle = titleEdit.value.trim();
+            const nextAuthor = authorEdit.value.trim();
+            const nextText = descEdit.value.trim();
+            if (!nextTitle || !nextAuthor || !nextText) {
+              return;
+            }
+            items[index] = normalizeItem({
+              ...items[index],
+              title: nextTitle,
+              author: nextAuthor,
+              text: nextText,
+              textJa: nextText,
+              textEn: nextText,
+            });
+            editingIndex = null;
+            saveItems();
+            renderList();
+          });
+
+          const cancelEditButton = document.createElement("button");
+          cancelEditButton.type = "button";
+          cancelEditButton.textContent = "キャンセル";
+          cancelEditButton.addEventListener("click", () => {
+            editingIndex = null;
+            renderList();
+          });
+
+          inlineActions.appendChild(saveEditButton);
+          inlineActions.appendChild(cancelEditButton);
+
+          editor.appendChild(titleEdit);
+          editor.appendChild(authorEdit);
+          editor.appendChild(descEdit);
+          editor.appendChild(inlineActions);
+          card.appendChild(editor);
+        }
+
         captionList.appendChild(card);
       });
 
@@ -989,15 +1109,14 @@
         text: descInput.value.trim(),
       };
 
-      if (editingIndex !== null) {
-        items[editingIndex] = normalizeItem({
-          ...items[editingIndex],
+      items.push(
+        normalizeItem({
           ...entry,
-          textJa: descInput.value.trim(),
-        });
-      } else {
-        items.push(normalizeItem({ ...entry, textJa: entry.text }));
-      }
+          text: entry.text,
+          textJa: entry.text,
+          textEn: entry.text,
+        })
+      );
 
       saveItems();
       renderList();
@@ -1013,8 +1132,11 @@
     });
 
     printButton.addEventListener("click", () => {
-      renderPrintList();
-      window.print();
+      printWithFreshPreview();
+    });
+
+    exportButton.addEventListener("click", () => {
+      exportCsv();
     });
 
     clearAllButton.addEventListener("click", () => {
@@ -1036,9 +1158,6 @@
 
     [titleInput, authorInput, descInput].forEach((input) => {
       input.addEventListener("input", () => {
-        if (editingIndex !== null) {
-          return;
-        }
         clearFieldErrors();
       });
     });
@@ -1066,6 +1185,10 @@
     };
 
     initialize();
+
+    window.addEventListener("beforeprint", () => {
+      renderPrintList();
+    });
 
     if ("serviceWorker" in navigator) {
       const updateBanner = document.getElementById("updateBanner");
