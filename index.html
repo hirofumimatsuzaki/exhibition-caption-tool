@@ -324,9 +324,37 @@
       font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
     }
 
-    .print-only,
-    .measure-root {
+    .print-only {
       display: none;
+    }
+
+    .measure-root {
+      position: absolute;
+      left: -99999px;
+      top: 0;
+      width: calc(210mm - 36mm);
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .measure-root .caption-card {
+      width: calc(210mm - 36mm);
+      border: none;
+      padding: 0;
+      border-radius: 0;
+      gap: 10px;
+    }
+
+    .measure-root .caption-title {
+      font-size: 20pt;
+    }
+
+    .measure-root .caption-author {
+      font-size: 13pt;
+    }
+
+    .measure-root .caption-desc {
+      font-size: 11.5pt;
     }
 
     @media (max-width: 720px) {
@@ -399,6 +427,8 @@
       .print-page-break {
         break-after: page;
         page-break-after: always;
+        break-inside: avoid-page;
+        page-break-inside: avoid;
       }
 
       .print-one .caption-card:last-child,
@@ -862,7 +892,7 @@
       return a4Height - mmPx * (PRINT_MARGIN_MM * 2) - PRINT_SAFETY_PX;
     };
 
-    const fitsSinglePage = (item) => {
+    const fitsBilingualPage = (item) => {
       const printableHeight = getPrintableHeight();
       if (!printableHeight) {
         return null;
@@ -873,10 +903,6 @@
         { label: "English", text: item.textEn || item.text || "Text is empty." },
       ]);
 
-      measurePage.style.position = "absolute";
-      measurePage.style.left = "-99999px";
-      measurePage.style.top = "0";
-      measurePage.style.width = "calc(210mm - 36mm)";
       measureRoot.appendChild(measurePage);
       const measuredHeight = measurePage.getBoundingClientRect().height;
       measurePage.remove();
@@ -890,7 +916,7 @@
       items.map((item) => normalizeItem(item)).forEach((item) => {
         const sameTexts = Boolean(item.textJa && item.textEn && item.textJa === item.textEn);
         const hasBothLanguages = Boolean(item.textJa && item.textEn && !sameTexts);
-        const fits = hasBothLanguages ? fitsSinglePage(item) : true;
+        const fits = hasBothLanguages ? fitsBilingualPage(item) : true;
         const fallbackSplit =
           (item.textJa.length >= FALLBACK_BILINGUAL_THRESHOLD ||
             item.textEn.length >= FALLBACK_BILINGUAL_THRESHOLD);
@@ -927,7 +953,10 @@
       }
     };
 
-    const printWithFreshPreview = () => {
+    const printWithFreshPreview = async () => {
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
       renderPrintList();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
