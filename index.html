@@ -354,7 +354,8 @@
     }
 
     .measure-root .caption-desc {
-      font-size: 11.5pt;
+      font-size: var(--print-body-size, 11.5pt);
+      line-height: var(--print-body-line-height, 1.7);
     }
 
     @media (max-width: 720px) {
@@ -461,7 +462,8 @@
       }
 
       .caption-desc {
-        font-size: 11.5pt;
+        font-size: var(--print-body-size, 11.5pt);
+        line-height: var(--print-body-line-height, 1.7);
       }
 
     }
@@ -591,13 +593,48 @@
         .join("\n")
         .trim();
 
-    const normalizeItem = (item) => ({
-      title: (item.title ?? item.title_en ?? "").trim(),
-      author: (item.author ?? item.artist ?? "").trim(),
-      text: cleanCaptionText(item.text ?? ""),
-      textJa: cleanCaptionText(item.textJa ?? item.text_ja ?? ""),
-      textEn: cleanCaptionText(item.textEn ?? item.text_en ?? item.text ?? ""),
-    });
+    const splitLegacyBilingualText = (value) => {
+      const text = cleanCaptionText(value);
+      const lines = text.split("\n");
+      const hasJapanese = (line) => /[\u3040-\u30ff\u3400-\u9fff]/.test(line);
+      const hasEnglish = (line) => /[A-Za-z]/.test(line);
+
+      for (let index = 1; index < lines.length; index += 1) {
+        const line = lines[index].trim();
+        if (!line || hasJapanese(line) || !hasEnglish(line)) {
+          continue;
+        }
+
+        const textJa = lines.slice(0, index).join("\n").trim();
+        const textEn = lines.slice(index).join("\n").trim();
+        if (hasJapanese(textJa) && hasEnglish(textEn) && !hasJapanese(textEn)) {
+          return { textJa, textEn };
+        }
+      }
+
+      return null;
+    };
+
+    const normalizeItem = (item) => {
+      let textJa = cleanCaptionText(item.textJa ?? item.text_ja ?? "");
+      let textEn = cleanCaptionText(item.textEn ?? item.text_en ?? item.text ?? "");
+
+      if (textJa && textJa === textEn) {
+        const splitText = splitLegacyBilingualText(textJa);
+        if (splitText) {
+          textJa = splitText.textJa;
+          textEn = splitText.textEn;
+        }
+      }
+
+      return {
+        title: (item.title ?? item.title_en ?? "").trim(),
+        author: (item.author ?? item.artist ?? "").trim(),
+        text: cleanCaptionText(item.text ?? ""),
+        textJa,
+        textEn,
+      };
+    };
 
     const setFieldError = (field, hint, hasError, message) => {
       field.classList.toggle("field-error", hasError);
@@ -910,6 +947,30 @@
       return measuredHeight <= printableHeight;
     };
 
+    const fitPrintPageToA4 = (page) => {
+      const printableHeight = getPrintableHeight();
+      if (!printableHeight) {
+        return;
+      }
+
+      const sizes = [11.5, 11, 10.5, 10, 9.5, 9, 8.5];
+      measureRoot.appendChild(page);
+      for (const size of sizes) {
+        page.style.setProperty("--print-body-size", `${size}pt`);
+        page.style.setProperty("--print-body-line-height", size <= 9.5 ? "1.55" : "1.7");
+        if (page.getBoundingClientRect().height <= printableHeight) {
+          break;
+        }
+      }
+      page.remove();
+    };
+
+    const appendPrintPage = (item, blocks) => {
+      const page = createPrintPage(item, blocks);
+      fitPrintPageToA4(page);
+      printList.appendChild(page);
+    };
+
     const renderPrintList = () => {
       printList.innerHTML = "";
 
@@ -923,12 +984,8 @@
         const shouldSplit = hasBothLanguages && (fits === null ? fallbackSplit : !fits);
 
         if (shouldSplit) {
-          printList.appendChild(
-            createPrintPage(item, [{ label: "日本語", text: item.textJa || "本文未入力" }])
-          );
-          printList.appendChild(
-            createPrintPage(item, [{ label: "English", text: item.textEn || "Text is empty." }])
-          );
+          appendPrintPage(item, [{ label: "日本語", text: item.textJa || "本文未入力" }]);
+          appendPrintPage(item, [{ label: "English", text: item.textEn || "Text is empty." }]);
           return;
         }
 
@@ -942,7 +999,7 @@
         if (!blocks.length) {
           blocks.push({ label: "本文", text: item.text || "本文未入力" });
         }
-        printList.appendChild(createPrintPage(item, blocks));
+        appendPrintPage(item, blocks);
       });
 
       const pages = printList.querySelectorAll(".print-page-break");
@@ -1104,9 +1161,21 @@
           authorEdit.value = item.author;
           authorEdit.placeholder = "作家名";
 
-          const descEdit = document.createElement("textarea");
-          descEdit.value = item.textJa || item.textEn || item.text;
-          descEdit.placeholder = "本文";
+          const textJaLabel = document.createElement("label");
+          textJaLabel.textContent = "日本語本文";
+
+          const textJaEdit = document.createElement("textarea");
+          textJaEdit.value = item.textJa || "";
+          textJaEdit.placeholder = "日本語本文";
+          textJaLabel.appendChild(textJaEdit);
+
+          const textEnLabel = document.createElement("label");
+          textEnLabel.textContent = "English text";
+
+          const textEnEdit = document.createElement("textarea");
+          textEnEdit.value = item.textEn || "";
+          textEnEdit.placeholder = "English text";
+          textEnLabel.appendChild(textEnEdit);
 
           const inlineActions = document.createElement("div");
           inlineActions.className = "inline-actions";
@@ -1118,17 +1187,18 @@
           saveEditButton.addEventListener("click", () => {
             const nextTitle = titleEdit.value.trim();
             const nextAuthor = authorEdit.value.trim();
-            const nextText = descEdit.value.trim();
-            if (!nextTitle || !nextAuthor || !nextText) {
+            const nextTextJa = textJaEdit.value.trim();
+            const nextTextEn = textEnEdit.value.trim();
+            if (!nextTitle || !nextAuthor || (!nextTextJa && !nextTextEn)) {
               return;
             }
             items[index] = normalizeItem({
               ...items[index],
               title: nextTitle,
               author: nextAuthor,
-              text: nextText,
-              textJa: nextText,
-              textEn: nextText,
+              text: nextTextJa || nextTextEn,
+              textJa: nextTextJa,
+              textEn: nextTextEn,
             });
             editingIndex = null;
             saveItems();
@@ -1148,7 +1218,8 @@
 
           editor.appendChild(titleEdit);
           editor.appendChild(authorEdit);
-          editor.appendChild(descEdit);
+          editor.appendChild(textJaLabel);
+          editor.appendChild(textEnLabel);
           editor.appendChild(inlineActions);
           card.appendChild(editor);
         }
